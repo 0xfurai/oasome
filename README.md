@@ -1,6 +1,7 @@
 # oasome
 
 [![ci](https://github.com/0xfurai/oasome/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/0xfurai/oasome/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xfurai/oasome/badges/coverage.json)](https://github.com/0xfurai/oasome/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/0xfurai/oasome.svg)](https://pkg.go.dev/github.com/0xfurai/oasome)
 
 A lightweight OpenAPI 3.1 document builder for Go's standard `http.ServeMux`.

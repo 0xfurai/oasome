@@ -28,3 +28,36 @@ jobs:
           node-version: 22
       - name: Validate the OpenAPI 3.1 golden specs
         run: npx --yes @redocly/cli@2.77.0 lint testdata/library.golden.json testdata/minimal.golden.json --config redocly.yaml
+
+  # Measures statement coverage on main and publishes the number for the
+  # README badge to the "badges" branch. No external service is used.
+  coverage:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Measure coverage
+        id: cover
+        run: |
+          go test -coverpkg=./,./oasometest -coverprofile=cover.out ./...
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {sub("%", "", $3); print $3}')
+          color=$(awk -v p="$pct" 'BEGIN {print (p >= 90) ? "brightgreen" : (p >= 75) ? "yellow" : "red"}')
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "color=$color" >> "$GITHUB_OUTPUT"
+      - name: Publish the badge data
+        env:
+          PCT: ${{ steps.cover.outputs.pct }}
+          COLOR: ${{ steps.cover.outputs.color }}
+          TOKEN: ${{ github.token }}
+        run: |
+          mkdir badge && cd badge
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$PCT" "$COLOR" > coverage.json
+          git init -q -b badges
+          git add coverage.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "Update coverage badge"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}" badges
