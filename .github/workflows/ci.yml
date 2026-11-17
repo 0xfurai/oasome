@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.22.x", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Example spec is up to date
+        run: go generate ./example && git diff --exit-code example/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate the OpenAPI 3.1 golden specs
+        run: npx --yes @redocly/cli@2.77.0 lint testdata/library.golden.json testdata/minimal.golden.json --config redocly.yaml

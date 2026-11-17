@@ -1,0 +1,17 @@
+# Lint configuration for the golden spec (testdata/library.golden.json).
+# Only style rules are relaxed; every structural OpenAPI 3.1 check stays on.
+extends:
+  - recommended
+
+rules:
+  # "/items/{$}" and "/items/" are documented as "/items/" on purpose.
+  no-path-trailing-slash: off
+  # The test fixture is not a published API.
+  info-license: off
+  no-server-example.com: off
+  # operationId is optional in this library (OperationID option).
+  operation-operationId: off
+  # Routes may document only some statuses (or, in minimal.golden.json,
+  # none), which is a documentation-completeness matter, not a spec error.
+  operation-2xx-response: off
+  operation-4xx-response: off

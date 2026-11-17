@@ -1,0 +1,62 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Minimal API",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://events.example.org"
+    }
+  ],
+  "paths": {
+    "/events": {
+      "post": {
+        "summary": "Receive an event",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "No responses are documented for this operation."
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Problem": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "title",
+          "type"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}
