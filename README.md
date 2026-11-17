@@ -1,5 +1,9 @@
 # oasome
 
+<p align="center">
+  <img src="assets/mascot.jpg" alt="The oasome gopher holds an OpenAPI blueprint" width="600">
+</p>
+
 [![ci](https://github.com/0xfurai/oasome/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/0xfurai/oasome/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/0xfurai/oasome/badges/coverage.json)](https://github.com/0xfurai/oasome/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/0xfurai/oasome.svg)](https://pkg.go.dev/github.com/0xfurai/oasome)
@@ -333,3 +337,7 @@ To refresh the golden files after an intended change, run
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The mascot is based on the Go gopher, which was designed by
+[Renee French](https://go.dev/blog/gopher) and is licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
