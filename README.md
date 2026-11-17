@@ -1,5 +1,8 @@
 # oasome
 
+[![ci](https://github.com/0xfurai/oasome/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/0xfurai/oasome/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/0xfurai/oasome.svg)](https://pkg.go.dev/github.com/0xfurai/oasome)
+
 A lightweight OpenAPI 3.1 document builder for Go's standard `http.ServeMux`.
 You keep your real `*http.ServeMux` and your real handlers. You add
 documentation at the place where you register the route.
