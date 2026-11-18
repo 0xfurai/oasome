@@ -18,6 +18,10 @@
 //     empty body), or
 //   - a request body was sent and does not strictly decode into the Body type.
 //
+// Three things are not checked: a response whose media type is declared with
+// oasome.ReturnsContent and is not JSON, response headers, and the shape of a
+// body whose type has an OASSchema method (any valid JSON is accepted).
+//
 // Requests that match no documented route pass through unchecked.
 //
 // Routes are matched with [http.Request.Pattern], which needs Go 1.23, so
@@ -43,6 +47,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"reflect"
 	"slices"
@@ -97,12 +102,12 @@ func checkRequest(t testing.TB, r *http.Request, route bridge.Route, body []byte
 func checkResponse(t testing.TB, r *http.Request, route bridge.Route, rec *recorder) {
 	t.Helper()
 	status := rec.statusCode()
-	typ, declared := route.Responses[status]
+	content, declared := route.Responses[status]
 	if !declared {
 		t.Errorf("oasometest: %s: response status %d is not declared (declared: %v)", r.Pattern, status, declaredStatuses(route))
 		return
 	}
-	if err := checkResponseBody(rec.body.Bytes(), typ); err != nil {
+	if err := checkResponseBody(rec.body.Bytes(), content, rec.Header().Get("Content-Type")); err != nil {
 		t.Errorf("oasometest: %s: response body for status %d: %v", r.Pattern, status, err)
 	}
 }
@@ -116,13 +121,25 @@ func declaredStatuses(route bridge.Route) []int {
 	return out
 }
 
-// checkResponseBody checks a body against the declared type; a nil type
-// means the body must be empty.
-func checkResponseBody(body []byte, typ reflect.Type) error {
-	if typ == nil {
+const jsonMediaType = "application/json"
+
+// checkResponseBody checks a body against the declared content. No content
+// means the body must be empty. Only a JSON body is decoded: when the
+// response has a declared media type other than JSON, the body is not
+// checked.
+func checkResponseBody(body []byte, content map[string]reflect.Type, contentType string) error {
+	if len(content) == 0 {
 		if len(body) != 0 {
 			return errors.New("expected an empty body (ReturnsEmpty)")
 		}
+		return nil
+	}
+	media, _, _ := mime.ParseMediaType(contentType)
+	if _, ok := content[media]; ok && media != jsonMediaType {
+		return nil
+	}
+	typ, ok := content[jsonMediaType]
+	if !ok {
 		return nil
 	}
 	if err := strictDecode(body, typ); err != nil {

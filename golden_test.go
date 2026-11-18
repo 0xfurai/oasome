@@ -58,7 +58,7 @@ func (Genre) OASEnum() []Genre { return []Genre{"fiction", "science", "history"}
 type CreateBook struct {
 	Title    string `json:"title" doc:"Title of the book"`
 	AuthorID int64  `json:"authorId"`
-	ISBN     string `json:"isbn,omitempty"`
+	ISBN     string `json:"isbn,omitempty" pattern:"^[0-9-]{10,17}$"`
 	Genre    *Genre `json:"genre,omitempty"`
 }
 
@@ -105,6 +105,25 @@ type Invoice struct {
 	Notes *string `json:"notes,omitempty"`
 }
 
+// BookGone is one of the bodies of a 404 for a book cover.
+type BookGone struct {
+	Since time.Time `json:"since"`
+}
+
+// NotFoundOrGone documents two possible bodies with the Ref placeholder.
+type NotFoundOrGone struct{}
+
+func (NotFoundOrGone) OASSchema() map[string]any {
+	return map[string]any{"anyOf": []any{oasome.Ref[Problem](), oasome.Ref[BookGone]()}}
+}
+
+// patternTag is a FieldSchema function for a project-specific tag.
+func patternTag(f *oasome.SchemaField) {
+	if v, ok := f.Field.Tag.Lookup("pattern"); ok {
+		f.Schema["pattern"] = v
+	}
+}
+
 // libraryDoc builds the documented API shared by the golden and CI tests.
 func libraryDoc() *oasome.Doc {
 	doc := oasome.New("Library API", "2.3.1",
@@ -113,6 +132,7 @@ func libraryDoc() *oasome.Doc {
 		oasome.Server("http://localhost:8080", "Local development"),
 		oasome.SecurityScheme("bearerAuth", oasome.Scheme{Type: "http", Scheme: "bearer", BearerFormat: "JWT"}),
 		oasome.SecurityScheme("apiKey", oasome.Scheme{Type: "apiKey", In: "header", Name: "X-API-Key", Description: "Service key"}),
+		oasome.FieldSchema(patternTag),
 		oasome.Defaults(
 			oasome.Returns[Problem](401),
 			oasome.Returns[Problem](500),
@@ -138,6 +158,16 @@ func libraryDoc() *oasome.Doc {
 		oasome.Summary("Get a book"), oasome.OperationID("getBook"), oasome.Tags("books"),
 		oasome.Params[BookPath](),
 		oasome.Returns[Book](200), oasome.Returns[Problem](404))
+
+	doc.Route("GET /books/{id}/cover", noop,
+		oasome.Summary("Download the cover"), oasome.OperationID("getBookCover"), oasome.Tags("books"),
+		oasome.Params[BookPath](),
+		oasome.ReturnsContent[string](200, "image/svg+xml"),
+		oasome.ReturnsContent[any](200, "image/png"),
+		oasome.ResponseHeader[string](200, "Content-Disposition", "Suggested file name"),
+		oasome.Returns[NotFoundOrGone](404),
+		oasome.Returns[Problem](429),
+		oasome.ResponseHeader[int](429, "Retry-After", "Seconds to wait before the next request"))
 
 	doc.Route("DELETE /books/{id}", noop,
 		oasome.Summary("Delete a book"), oasome.OperationID("deleteBook"), oasome.Tags("books"),

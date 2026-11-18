@@ -312,6 +312,107 @@
         }
       }
     },
+    "/books/{id}/cover": {
+      "get": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Download the cover",
+        "operationId": "getBookCover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Book identifier",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "example": 42
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Suggested file name",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "image/png": {
+                "schema": {}
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Problem"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BookGone"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before the next request",
+                "schema": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/categories/": {
       "get": {
         "tags": [
@@ -746,6 +847,18 @@
         ],
         "type": "object"
       },
+      "BookGone": {
+        "properties": {
+          "since": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since"
+        ],
+        "type": "object"
+      },
       "Category": {
         "properties": {
           "children": {
@@ -804,6 +917,7 @@
             ]
           },
           "isbn": {
+            "pattern": "^[0-9-]{10,17}$",
             "type": "string"
           },
           "title": {

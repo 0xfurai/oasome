@@ -92,7 +92,9 @@ Route options (arguments of `Route` and `RouteHandler`, and of `Defaults`):
 | `Body[T]()` | JSON request body of type `T`. |
 | `Returns[T](status)` | JSON response with this status and body type `T`. The description is `http.StatusText(status)`. Repeating a status replaces the earlier one. |
 | `ReturnsEmpty(status)` | Response with a description and no body. |
-| `Params[T]()` | Parameters from the struct `T`. Tags: `path:"name"`, `query:"name"`, `header:"name"`. The only tag option is `,required` (for query and header). Path parameters are always required. `doc:"..."` and `example:"..."` work too. A non-struct `T` panics. |
+| `ReturnsContent[T](status, mediaType)` | Response body with another media type, such as `image/svg+xml`. The schema is that of `T`; use `any` for binary data. A status can have several media types. |
+| `ResponseHeader[T](status, name, description)` | A header of the response with this status. The route must declare the status, itself or through `Defaults`. |
+| `Params[T]()` | Parameters from the struct `T`. Tags: `path:"name"`, `query:"name"`, `header:"name"`. The only tag option is `,required` (for query and header). Path parameters are always required. `doc:"..."` and `example:"..."` work too. A non-struct `T` panics. Several `Params` merge; the same location and name replaces the earlier parameter. |
 | `Summary(s)`, `Description(s)` | Text of the operation. |
 | `Tags(tags...)` | Tags of the operation. A later `Tags` replaces an earlier one. |
 | `OperationID(id)` | The `operationId`. A duplicate panics. |
@@ -108,6 +110,8 @@ Document options (arguments of `New`):
 | `DocDescription(s)` | The description in `info`. |
 | `Server(url, description)` | Adds a server. Repeatable. |
 | `SecurityScheme(name, Scheme{...})` | Declares a security scheme. Declare every scheme that you name in `Security`. |
+| `FieldSchema(fn)` | Calls `fn` for every struct field, to apply your own tags. See [Your own struct tags](#your-own-struct-tags-fieldschema). |
+| `Naming(fn)` | Names the components. See [Component names](#component-names-naming). |
 | `Extend(fn)` | Edits the finished document. See [Everything else](#everything-else-extend). |
 
 `Scheme` has the fields `Type`, `Scheme`, `BearerFormat`, `In`, `Name`,
@@ -169,7 +173,10 @@ For each request that matches a documented route, the test fails (with
   fields are errors; a `ReturnsEmpty` response must have an empty body);
 - a request body was sent and does not strictly decode into the `Body` type.
 
-Requests that match no documented route pass through unchecked.
+Requests that match no documented route pass through unchecked. Three things
+are not checked: a response whose media type is declared with `ReturnsContent`
+and is not JSON, response headers, and the shape of a body whose type has an
+`OASSchema` method (any valid JSON is accepted for it).
 
 `http.StripPrefix` copies the request, so a wrapper around the outer mux never
 sees the sub-mux pattern. Wrap the sub-mux with the view that has the same
@@ -244,6 +251,86 @@ func (User) OASExample() User { return User{ID: "u_42", Name: "Ada"} }
 - A struct that embeds a type gets the methods of that type, as with
   `MarshalJSON`. Give the outer type its own method if the promoted one is
   wrong for it.
+
+## Your own struct tags: `FieldSchema`
+
+`oasome` reads only the `json`, `doc` and `example` tags (and the parameter
+tags). If your types carry other tags, for example from a validator, one
+function applies them. It runs for every struct field that becomes a property
+of a JSON body or a parameter:
+
+```go
+doc := oasome.New("My API", "1.0.0",
+	oasome.FieldSchema(func(f *oasome.SchemaField) {
+		tag := f.Field.Tag
+		if v, ok := tag.Lookup("minimum"); ok {
+			f.Schema["minimum"] = json.Number(v)
+		}
+		if v, ok := tag.Lookup("enum"); ok {
+			f.Schema["enum"] = strings.Split(v, ",")
+		}
+		if strings.Contains(tag.Get("validate"), "required") {
+			f.Required = true
+		}
+	}),
+)
+```
+
+`SchemaField` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `Struct` | The struct type that declares the field. |
+| `Field` | The `reflect.StructField`. Read your tags from `Field.Tag`. |
+| `In` | `"body"` for a JSON property, or `"path"`, `"query"`, `"header"` for a `Params` field. |
+| `Schema` | The reflected schema. Edit it in place, or assign a new map. |
+| `Required` | Whether the property or parameter is required. Path parameters stay required. |
+
+- The function runs after `doc` and `example` are applied, each time a schema
+  is built. It must give the same result on every call.
+- A Go type has one schema. The function cannot give a field one rule in a
+  request and another rule in a response; use two types for that.
+- A path wildcard that no `Params` struct mentions has no field, so the
+  function does not see it.
+
+## Component names: `Naming`
+
+By default a component uses the bare type name (see [Schema rules](#schema-rules)).
+`Naming` replaces that rule:
+
+```go
+oasome.Naming(func(t reflect.Type) string {
+	return path.Base(t.PkgPath()) + "." + t.Name() // admin.UserResponse
+})
+```
+
+The name must match `[a-zA-Z0-9._-]+`, and two types must not get the same
+name; `Route` panics otherwise. An empty result gives the type its default
+name. For a generic type, `t.Name()` contains brackets and import paths, so
+build the name yourself.
+
+## Several body shapes: `Ref`
+
+`Ref[T]()` is a placeholder for the schema of `T` in the result of an
+`OASSchema` method. A named struct becomes a `$ref` to its component. This
+gives `anyOf` bodies without a schema written by hand:
+
+```go
+type NotFoundOrConflict struct{}
+
+func (NotFoundOrConflict) OASSchema() map[string]any {
+	return map[string]any{"anyOf": []any{oasome.Ref[NotFound](), oasome.Ref[Conflict]()}}
+}
+
+mux.Handle(doc.Route("PUT /users/{id}", updateUser,
+	oasome.Returns[User](200),
+	oasome.Returns[NotFoundOrConflict](404),
+))
+```
+
+Use `map[string]any` and `[]any` in the result: the placeholder is not found
+inside other map or slice types. Do not refer to the type that the method
+belongs to.
 
 ## Everything else: `Extend`
 
@@ -330,8 +417,9 @@ To refresh the golden files after an intended change, run
 - A component is renamed when a new type with the same bare name is registered.
   The names depend only on the set of types, but that set can grow. Do not
   depend on a component name in client code when two packages share a type name.
-- No YAML, no docs UI, no non-JSON content types, no file uploads, no `oneOf`,
-  callbacks or webhooks. `Extend` can add fields for some of these by hand.
+- No request mode. A Go type has one schema for requests and responses.
+- No YAML, no docs UI, no file uploads, no callbacks or webhooks. `Extend` can
+  add fields for some of these by hand.
 - `oasometest` needs Go 1.23 or later. There is no fallback for Go 1.22.
 
 ## License

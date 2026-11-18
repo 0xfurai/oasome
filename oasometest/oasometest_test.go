@@ -319,3 +319,53 @@ func TestHandlerThatWritesNothing(t *testing.T) {
 	serve(h, "POST", "/bad", "")
 	expectErrors(t, tb, "response status 200 is not declared")
 }
+
+type variants struct{}
+
+func (variants) OASSchema() map[string]any {
+	return map[string]any{"anyOf": []any{oasome.Ref[User](), oasome.Ref[ErrorBody]()}}
+}
+
+func TestNonJSONResponsesAreNotDecoded(t *testing.T) {
+	doc := oasome.New("t", "1")
+	mux := http.NewServeMux()
+	mux.Handle(doc.Route("GET /badge", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("format") == "json" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = io.WriteString(w, `{"id":"1","extra":true}`)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = io.WriteString(w, `<svg/>`)
+	}, oasome.Returns[User](200), oasome.ReturnsContent[string](200, "image/svg+xml")))
+	mux.Handle(doc.Route("GET /file", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "raw bytes")
+	}, oasome.ReturnsContent[any](200, "application/octet-stream")))
+
+	tb := &fakeTB{}
+	h := oasometest.Wrap(tb, doc, mux)
+	serve(h, "GET", "/badge", "")
+	serve(h, "GET", "/file", "")
+	expectErrors(t, tb)
+	serve(h, "GET", "/badge?format=json", "")
+	expectErrors(t, tb, `unknown field "extra"`)
+}
+
+func TestTypesWithOASSchemaAcceptAnyJSON(t *testing.T) {
+	doc := oasome.New("t", "1")
+	mux := http.NewServeMux()
+	mux.Handle(doc.Route("POST /x", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("broken") != "" {
+			writeJSON(w, 200, `{"message":`)
+			return
+		}
+		writeJSON(w, 200, `{"message":"either variant"}`)
+	}, oasome.Body[variants](), oasome.Returns[variants](200)))
+
+	tb := &fakeTB{}
+	h := oasometest.Wrap(tb, doc, mux)
+	serve(h, "POST", "/x", `{"anything":1}`)
+	expectErrors(t, tb)
+	serve(h, "POST", "/x?broken=1", "")
+	expectErrors(t, tb, "response body for status 200")
+}

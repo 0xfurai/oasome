@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"reflect"
 	"sync"
 
 	"github.com/0xfurai/oasome/internal/bridge"
@@ -23,10 +24,11 @@ type Doc struct {
 
 // route is one documented operation.
 type route struct {
-	pattern string // mux pattern, exactly as registered
-	prefix  string // prefix of the view that registered it
-	method  string // OpenAPI operation key
-	path    string // documented path including the prefix
+	names   map[string]reflect.Type // component names from the Naming function
+	pattern string                  // mux pattern, exactly as registered
+	prefix  string                  // prefix of the view that registered it
+	method  string                  // OpenAPI operation key
+	path    string                  // documented path including the prefix
 	cfg     *routeConfig
 	params  []paramField
 }
@@ -47,6 +49,9 @@ type core struct {
 	defaultOpts []RouteOption
 	defaults    *routeConfig // the defaults alone, for top-level security
 	extend      []func(map[string]any)
+	fieldHooks  []func(*SchemaField)
+	naming      func(reflect.Type) string
+	named       map[string]reflect.Type // names given by the Naming function
 
 	routes  []*route
 	index   map[routeKey]*route
@@ -75,6 +80,9 @@ func New(title, version string, opts ...DocOption) *Doc {
 		defaultOpts: dc.defaults,
 		defaults:    defaults,
 		extend:      dc.extend,
+		fieldHooks:  dc.fieldHooks,
+		naming:      dc.naming,
+		named:       map[string]reflect.Type{},
 		index:       map[routeKey]*route{},
 		ops:         map[string]bool{},
 		opIDs:       map[string]bool{},
@@ -131,8 +139,29 @@ func (d *Doc) register(pattern string, opts []RouteOption) {
 		cfg:     cfg,
 		params:  buildParams(pattern, pp, cfg.params),
 	}
-	checkTypes(rt)
+	checkHeaders(pattern, cfg)
+	rt.names = d.core.checkTypes(rt)
 	d.core.add(rt)
+}
+
+// newGen returns a schema generator with the hooks of the document.
+func (c *core) newGen() *gen {
+	g := newGen()
+	g.hooks, g.naming = c.fieldHooks, c.naming
+	return g
+}
+
+// checkHeaders rejects a ResponseHeader for a status the route does not
+// declare.
+func checkHeaders(pattern string, cfg *routeConfig) {
+	for status, hs := range cfg.headers {
+		if cfg.responses[status] != nil {
+			continue
+		}
+		for _, h := range hs {
+			panic(fmt.Sprintf("oasome: %q: ResponseHeader %q is for status %d, which the route does not declare", pattern, h.name, status))
+		}
+	}
 }
 
 // resolve applies the document defaults, then the route options.
@@ -144,14 +173,24 @@ func (c *core) resolve(opts []RouteOption) *routeConfig {
 }
 
 // checkTypes builds the schemas once so that unsupported types panic when
-// the route is registered, not when the document is first served.
-func checkTypes(rt *route) {
-	g := newGen()
+// the route is registered, not when the document is first served. It
+// returns the names that the Naming function gives to the types of the route.
+func (c *core) checkTypes(rt *route) map[string]reflect.Type {
+	g := c.newGen()
 	for _, t := range rt.cfg.routeTypes() {
 		g.schemaOf(t)
 	}
-	for _, p := range rt.params {
-		g.schemaOf(p.typ)
+	g.parameters(rt.params)
+	return g.customNames()
+}
+
+// checkNames rejects a custom component name that another route already
+// uses for a different type. The caller holds c.mu.
+func (c *core) checkNames(rt *route) {
+	for name, t := range rt.names {
+		if other, ok := c.named[name]; ok && other != t {
+			panic(fmt.Sprintf("oasome: Naming gave the name %q to two types: %s", name, typePair(other, t)))
+		}
 	}
 }
 
@@ -162,12 +201,15 @@ func (c *core) add(rt *route) {
 	if c.ops[key] {
 		panic(fmt.Sprintf("oasome: duplicate route %s %s (pattern %q)", rt.method, rt.path, rt.pattern))
 	}
-	if id := rt.cfg.operationID; id != "" {
-		if c.opIDs[id] {
-			panic(fmt.Sprintf("oasome: duplicate operation ID %q (pattern %q)", id, rt.pattern))
-		}
+	id := rt.cfg.operationID
+	if id != "" && c.opIDs[id] {
+		panic(fmt.Sprintf("oasome: duplicate operation ID %q (pattern %q)", id, rt.pattern))
+	}
+	c.checkNames(rt)
+	if id != "" {
 		c.opIDs[id] = true
 	}
+	maps.Copy(c.named, rt.names)
 	c.ops[key] = true
 	c.routes = append(c.routes, rt)
 	c.index[routeKey{rt.prefix, rt.pattern}] = rt
@@ -223,8 +265,33 @@ func lookup(doc any, pattern string) (bridge.Route, bool) {
 	if !ok {
 		return bridge.Route{}, false
 	}
-	return bridge.Route{
-		Body:      rt.cfg.body,
-		Responses: maps.Clone(rt.cfg.responses),
-	}, true
+	return bridgeRoute(rt.cfg), true
+}
+
+var anyType = reflect.TypeFor[any]()
+
+// bridgeRoute gives package oasometest the declared types of a route.
+func bridgeRoute(cfg *routeConfig) bridge.Route {
+	out := bridge.Route{Responses: make(map[int]map[string]reflect.Type, len(cfg.responses))}
+	if cfg.body != nil {
+		out.Body = decodable(cfg.body)
+	}
+	for status, d := range cfg.responses {
+		content := make(map[string]reflect.Type, len(d.content))
+		for media, t := range d.content {
+			content[media] = decodable(t)
+		}
+		out.Responses[status] = content
+	}
+	return out
+}
+
+// decodable returns the type that a body is decoded into for the drift
+// check. A type with an OASSchema method describes its own JSON form, which
+// the Go type does not show, so any valid JSON is accepted for it.
+func decodable(t reflect.Type) reflect.Type {
+	if t.Kind() != reflect.Interface && implements(t, overriderType) {
+		return anyType
+	}
+	return t
 }

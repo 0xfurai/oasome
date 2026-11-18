@@ -34,8 +34,10 @@ var (
 // their final names are chosen once all types are known, so references are
 // rendered lazily (see refName).
 type gen struct {
-	defs  map[reflect.Type]schema
-	names map[reflect.Type]string
+	defs   map[reflect.Type]schema
+	names  map[reflect.Type]string
+	hooks  []func(*SchemaField)
+	naming func(reflect.Type) string
 }
 
 func newGen() *gen {
@@ -58,12 +60,60 @@ func (r refName) MarshalJSON() ([]byte, error) {
 }
 
 // assignNames fixes the component names. Call it after all types are visited.
-func (g *gen) assignNames() {
-	types := make([]reflect.Type, 0, len(g.defs))
-	for t := range g.defs {
-		types = append(types, t)
+// Types named by the Naming function keep that name; the others get a
+// default name. It reports a name that two types share.
+func (g *gen) assignNames() error {
+	custom := g.customNames()
+	byType := make(map[reflect.Type]string, len(custom))
+	for name, t := range custom {
+		byType[t] = name
 	}
-	g.names = componentNames(types)
+	var auto []reflect.Type
+	for t := range g.defs {
+		if _, ok := byType[t]; !ok {
+			auto = append(auto, t)
+		}
+	}
+	g.names = componentNames(auto)
+	for _, t := range auto {
+		if _, taken := custom[g.names[t]]; taken {
+			return fmt.Errorf("oasome: component name %q is used by more than one type; check the Naming function", g.names[t])
+		}
+	}
+	maps.Copy(g.names, byType)
+	return nil
+}
+
+// customNames returns the names that the Naming function gives to the
+// visited types. It panics on an invalid name and on a name for two types.
+func (g *gen) customNames() map[string]reflect.Type {
+	out := map[string]reflect.Type{}
+	if g.naming == nil {
+		return out
+	}
+	for t := range g.defs {
+		name := g.naming(t)
+		if name == "" {
+			continue
+		}
+		if !componentKey.MatchString(name) {
+			panic(fmt.Sprintf("oasome: Naming gave %q for %s: a component name must match [a-zA-Z0-9._-]+", name, t))
+		}
+		if other, ok := out[name]; ok {
+			panic(fmt.Sprintf("oasome: Naming gave the name %q to two types: %s", name, typePair(other, t)))
+		}
+		out[name] = t
+	}
+	return out
+}
+
+// typePair names two types in a fixed order.
+func typePair(a, b reflect.Type) string {
+	x, y := identity(a), identity(b)
+	if x > y {
+		x, y = y, x
+	}
+	return x + " and " + y
 }
 
 // components returns the component schemas keyed by their final names.
@@ -84,7 +134,7 @@ func (g *gen) schemaOf(t reflect.Type) schema {
 		return nullable(g.schemaOf(t))
 	}
 	if s, ok := specialSchema(t); ok {
-		return decorate(t, s)
+		return decorate(t, g.resolveRefs(s).(schema))
 	}
 	s := g.kindSchema(t)
 	if t.Kind() == reflect.Struct {
@@ -263,8 +313,9 @@ func (g *gen) objectSchema(t reflect.Type) schema {
 	props := map[string]any{}
 	var required []string
 	for _, f := range structFields(t) {
-		props[f.name] = g.fieldSchema(f)
-		if !f.omit {
+		s, isRequired := g.hooked(f.owner, f.sf, inBody, g.fieldSchema(f), !f.omit)
+		props[f.name] = s
+		if isRequired {
 			required = append(required, f.name)
 		}
 	}

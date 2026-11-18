@@ -9,9 +9,9 @@ import "reflect"
 type Route struct {
 	// Body is the declared request body type, or nil.
 	Body reflect.Type
-	// Responses maps each declared status to its Go type. A nil type means
-	// the response has no body (ReturnsEmpty).
-	Responses map[int]reflect.Type
+	// Responses maps each declared status to its body types by media type.
+	// An empty map means the response has no body (ReturnsEmpty).
+	Responses map[int]map[string]reflect.Type
 }
 
 // Lookup finds the route registered with the given mux pattern on the

@@ -3,8 +3,10 @@ package oasome
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 )
 
 // Names of the optional methods that add to the reflected schema of a type.
@@ -89,4 +91,59 @@ func applyExtend(doc []byte, fns []func(map[string]any)) ([]byte, error) {
 		fn(spec)
 	}
 	return json.Marshal(spec)
+}
+
+// inBody is SchemaField.In for a property of a JSON body.
+const inBody = "body"
+
+// componentKey matches a valid components/schemas key.
+var componentKey = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// hooked runs the FieldSchema functions on one field and returns the schema
+// and the required flag that they leave.
+func (g *gen) hooked(owner reflect.Type, sf reflect.StructField, in string, s schema, required bool) (schema, bool) {
+	if len(g.hooks) == 0 {
+		return s, required
+	}
+	f := &SchemaField{Struct: owner, Field: sf, In: in, Schema: s, Required: required}
+	for _, hook := range g.hooks {
+		hook(f)
+	}
+	if f.Schema == nil {
+		f.Schema = schema{}
+	}
+	return f.Schema, f.Required
+}
+
+// schemaRef is the placeholder that Ref returns.
+type schemaRef struct {
+	t reflect.Type
+}
+
+// MarshalJSON fails: a placeholder that reaches the encoder was used outside
+// the result of an OASSchema method.
+func (r schemaRef) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("oasome: Ref[" + r.t.String() + "] is only valid in the result of an OASSchema method")
+}
+
+// resolveRefs returns a copy of v in which every Ref placeholder is replaced
+// by the schema of its type. It looks inside map[string]any and []any.
+func (g *gen) resolveRefs(v any) any {
+	switch x := v.(type) {
+	case schemaRef:
+		return g.schemaOf(x.t)
+	case map[string]any:
+		out := make(schema, len(x))
+		for k, e := range x {
+			out[k] = g.resolveRefs(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = g.resolveRefs(e)
+		}
+		return out
+	}
+	return v
 }

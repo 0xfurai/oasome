@@ -27,6 +27,8 @@ type paramField struct {
 	typ      reflect.Type
 	doc      string
 	example  string
+	sf       reflect.StructField
+	owner    reflect.Type // nil for a wildcard that no Params struct mentions
 }
 
 // paramSet holds the parameters declared by a Params[T] struct.
@@ -76,7 +78,25 @@ func (ps *paramSet) addField(owner reflect.Type, sf reflect.StructField) {
 		typ:      typ,
 		doc:      sf.Tag.Get("doc"),
 		example:  sf.Tag.Get("example"),
+		sf:       sf,
+		owner:    owner,
 	})
+}
+
+// mergeParams adds the fields of a later Params declaration to the earlier
+// ones. A parameter with the same location and name replaces the earlier
+// one, which is how a route overrides a default.
+func mergeParams(base, added []paramField) []paramField {
+	out := slices.Clone(base)
+	for _, f := range added {
+		same := func(o paramField) bool { return o.in == f.in && o.name == f.name }
+		if i := slices.IndexFunc(out, same); i >= 0 {
+			out[i] = f
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // paramTag returns the location and raw tag of a field, or "" if the field
@@ -117,11 +137,7 @@ var stringType = reflect.TypeFor[string]()
 // buildParams merges the pattern wildcards with a Params declaration. Path
 // parameters come first in pattern order; the others follow, sorted by
 // location and name.
-func buildParams(pattern string, pp parsedPattern, ps *paramSet) []paramField {
-	var declared []paramField
-	if ps != nil {
-		declared = ps.fields
-	}
+func buildParams(pattern string, pp parsedPattern, declared []paramField) []paramField {
 	checkPathParams(pattern, pp, declared)
 	out := make([]paramField, 0, len(pp.wildcards)+len(declared))
 	for _, w := range pp.wildcards {

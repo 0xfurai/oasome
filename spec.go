@@ -70,13 +70,19 @@ type requestBody struct {
 }
 
 type response struct {
-	Description string               `json:"description"`
-	Content     map[string]mediaType `json:"content,omitempty"`
+	Description string                `json:"description"`
+	Headers     map[string]specHeader `json:"headers,omitempty"`
+	Content     map[string]mediaType  `json:"content,omitempty"`
+}
+
+type specHeader struct {
+	Description string `json:"description,omitempty"`
+	Schema      schema `json:"schema"`
 }
 
 // build renders the document. The caller holds c.mu.
 func (c *core) build() ([]byte, error) {
-	g := newGen()
+	g := c.newGen()
 	paths := map[string]map[string]*operation{}
 	for _, rt := range c.routes {
 		item := paths[rt.path]
@@ -86,7 +92,9 @@ func (c *core) build() ([]byte, error) {
 		}
 		item[rt.method] = g.operation(rt)
 	}
-	g.assignNames()
+	if err := g.assignNames(); err != nil {
+		return nil, err
+	}
 	doc := specDoc{
 		OpenAPI:    "3.1.0",
 		Info:       specInfo{Title: c.title, Version: c.version, Description: c.description},
@@ -122,7 +130,7 @@ func (g *gen) operation(rt *route) *operation {
 		OperationID: cfg.operationID,
 		Deprecated:  cfg.deprecated,
 		Parameters:  g.parameters(rt.params),
-		Responses:   g.responses(cfg.responses),
+		Responses:   g.responses(cfg),
 	}
 	if cfg.body != nil {
 		op.RequestBody = &requestBody{Required: true, Content: g.content(cfg.body)}
@@ -141,23 +149,33 @@ func (g *gen) content(t reflect.Type) map[string]mediaType {
 	return map[string]mediaType{jsonMediaType: {Schema: g.schemaOf(t)}}
 }
 
+// parameter builds one parameter. The FieldSchema functions see the fields
+// of a Params struct, but not a wildcard that no struct mentions.
+func (g *gen) parameter(f paramField) parameter {
+	s, required := g.schemaOf(f.typ), f.required
+	if f.owner != nil {
+		s, required = g.hooked(f.owner, f.sf, f.in, s, required)
+	}
+	p := parameter{
+		Name:        f.name,
+		In:          f.in,
+		Description: f.doc,
+		Required:    required || f.in == inPath,
+		Schema:      s,
+	}
+	if f.tail {
+		p.Description = joinWords(p.Description, tailNote)
+	}
+	if f.example != "" {
+		p.Example = parseExample(f.typ, f.example, false)
+	}
+	return p
+}
+
 func (g *gen) parameters(fields []paramField) []parameter {
 	var out []parameter
 	for _, f := range fields {
-		p := parameter{
-			Name:        f.name,
-			In:          f.in,
-			Description: f.doc,
-			Required:    f.required,
-			Schema:      g.schemaOf(f.typ),
-		}
-		if f.tail {
-			p.Description = joinWords(p.Description, tailNote)
-		}
-		if f.example != "" {
-			p.Example = parseExample(f.typ, f.example, false)
-		}
-		out = append(out, p)
+		out = append(out, g.parameter(f))
 	}
 	return out
 }
@@ -169,17 +187,31 @@ func joinWords(a, b string) string {
 	return a + " " + b
 }
 
-func (g *gen) responses(declared map[int]reflect.Type) map[string]response {
-	if len(declared) == 0 {
+func (g *gen) responses(cfg *routeConfig) map[string]response {
+	if len(cfg.responses) == 0 {
 		return map[string]response{"default": {Description: noResponses}}
 	}
-	out := make(map[string]response, len(declared))
-	for status, t := range declared {
-		r := response{Description: statusText(status)}
-		if t != nil {
-			r.Content = g.content(t)
+	out := make(map[string]response, len(cfg.responses))
+	for status, d := range cfg.responses {
+		r := response{Description: statusText(status), Headers: g.headers(cfg.headers[status])}
+		for media, t := range d.content {
+			if r.Content == nil {
+				r.Content = map[string]mediaType{}
+			}
+			r.Content[media] = mediaType{Schema: g.schemaOf(t)}
 		}
 		out[strconv.Itoa(status)] = r
+	}
+	return out
+}
+
+func (g *gen) headers(decls map[string]headerDecl) map[string]specHeader {
+	if len(decls) == 0 {
+		return nil
+	}
+	out := make(map[string]specHeader, len(decls))
+	for _, h := range decls {
+		out[h.name] = specHeader{Description: h.description, Schema: g.schemaOf(h.typ)}
 	}
 	return out
 }

@@ -117,3 +117,10 @@ func TestApplyExtendRejectsBadJSON(t *testing.T) {
 		t.Error("want an error for a document that is not valid JSON")
 	}
 }
+
+func TestTypePairOrderIsFixed(t *testing.T) {
+	a, b := typeOfValue[baseT](), typeOfValue[nodeT]()
+	if typePair(a, b) != typePair(b, a) {
+		t.Errorf("typePair depends on the argument order: %q and %q", typePair(a, b), typePair(b, a))
+	}
+}

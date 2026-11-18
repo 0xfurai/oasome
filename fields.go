@@ -18,6 +18,8 @@ type field struct {
 	quoted  bool // ,string option
 	doc     string
 	example string
+	sf      reflect.StructField
+	owner   reflect.Type // the struct that declares the field
 }
 
 // walker explores a struct breadth first, like encoding/json's typeFields:
@@ -122,6 +124,8 @@ func (w *walker) add(parent field, sf reflect.StructField, ft reflect.Type, name
 		quoted:  hasOption(opts, "string") && quotable(ft),
 		doc:     sf.Tag.Get("doc"),
 		example: sf.Tag.Get("example"),
+		sf:      sf,
+		owner:   parent.typ,
 	}
 	if f.name == "" {
 		f.name = sf.Name

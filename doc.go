@@ -64,6 +64,14 @@
 // methods are called on a zero value and are found by name; a method with
 // another form panics when the route is registered.
 //
+// # Your own tags and names
+//
+// [FieldSchema] registers a function that is called for every struct field,
+// so a project can apply its own struct tags, such as validation rules.
+// [Naming] replaces the rule that names the components. [Ref] refers to the
+// schema of another type from the result of an OASSchema method, which gives
+// anyOf bodies.
+//
 // # Everything else
 //
 // [Extend] registers a function that edits the finished document, for the
